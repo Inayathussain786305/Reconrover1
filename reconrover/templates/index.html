@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ReconRover - Bug Bounty GUI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="container">
+    <h1>ReconRover - Bug Bounty GUI</h1>
+    <form id="scanForm">
+      <label for="domain">Enter Domain:</label>
+      <input type="text" id="domain" name="domain" placeholder="example.com" required />
+      <label for="tool">Select Tool:</label>
+      <select id="tool" name="tool" required>
+        {% for t in tools %}
+        <option value="{{ t }}">{{ t|capitalize }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Run Scan</button>
+    </form>
+
+    <div id="terminal" class="terminal" style="display:none;">
+      <div id="output"></div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('scanForm');
+    const terminal = document.getElementById('terminal');
+    const outputDiv = document.getElementById('output');
+
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      outputDiv.textContent = '';
+      terminal.style.display = 'block';
+
+      const formData = new FormData(form);
+      const domain = formData.get('domain');
+      const tool = formData.get('tool');
+
+      if (!domain || !tool) {
+        alert('Please enter domain and select a tool.');
+        return;
+      }
+
+      const evtSource = new EventSource('/run', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: `domain=${encodeURIComponent(domain)}&tool=${encodeURIComponent(tool)}`
+      });
+
+      // Because EventSource does not support POST, workaround with fetch + streams below:
+
+      evtSource.close(); // close default connection
+
+      // Use fetch + ReadableStream for SSE-like streaming output
+
+      fetch('/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `domain=${encodeURIComponent(domain)}&tool=${encodeURIComponent(tool)}`
+      }).then(response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        function read() {
+          reader.read().then(({ done, value }) => {
+            if (done) {
+              outputDiv.scrollTop = outputDiv.scrollHeight;
+              return;
+            }
+            const chunk = decoder.decode(value, { stream: true });
+            // Extract lines that start with 'data: '
+            chunk.split('\n').forEach(line => {
+              if(line.startsWith('data: ')) {
+                const text = line.replace('data: ', '');
+                outputDiv.textContent += text + '\n';
+                outputDiv.scrollTop = outputDiv.scrollHeight;
+              }
+            });
+            read();
+          });
+        }
+        read();
+      }).catch(err => {
+        outputDiv.textContent += `Error: ${err}\n`;
+      });
+    });
+  </script>
+</body>
+</html>
+
